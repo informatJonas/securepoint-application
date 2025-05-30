@@ -5,6 +5,9 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * Console command to get the serial numbers with the most queries from a JSON file.
+ */
 class GetMostQueries extends Command
 {
     /**
@@ -38,7 +41,7 @@ class GetMostQueries extends Command
 
         // Get the content of the JSON file
         $fileContent = Storage::disk('local')
-            ->get('parsed_nginx_logs_1748421338.json');
+            ->get('parsed_nginx_logs.json');
 
         // Decode the JSON content into an object
         $entriesObject = json_decode($fileContent);
@@ -46,16 +49,18 @@ class GetMostQueries extends Command
         // Set decoded object to a Laravel Collection
         $entriesObjectAsCollection = collect($entriesObject);
 
-        // Group by 'serial' and count occurrences, then take the top 10
+        // Group by 'serial'
         $grouped = $entriesObjectAsCollection->groupBy('serial', preserveKeys: true)
-            ->map(function ($group) {
-                return $group->count();
-            })
+            // Count the occurrences of each serial number
+            ->map(fn ($group) => $group->count())
+            // Take only the top 10 serial numbers with the most queries
             ->take(10)
+            // Sort the collection in descending order by count
             ->sortDesc();
 
         $this->info("Top 10 Serial Numbers with Most Queries:");
 
+        // Prepare table items
         foreach ($grouped as $serial => $count) {
             $tableItems[] = [
                 $serial,

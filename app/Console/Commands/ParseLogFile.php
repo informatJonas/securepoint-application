@@ -4,58 +4,58 @@ namespace App\Console\Commands;
 
 use App\Services\NginxLogParser;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
+/**
+ * Console command to parse a Nginx log file and output the results in a specified format.
+ */
 class ParseLogFile extends Command
 {
-    protected $signature   = 'app:parse-log-file 
-                           {file : Pfad zur Log-Datei}
-                           {--batch-size=1000 : Anzahl Zeilen pro Batch}
-                           {--output=array : Output Format (array|database|json)}
-                           {--debug : Debug-Modus aktivieren}
-                           {--analyze : Nur Log-Format analysieren}
-                           {--pattern= : Pattern erzwingen (combined|common|custom1|custom2|pseudonymized)}
-                           {--limit= : Maximale Anzahl zu parsender Zeilen}';
+    /**
+     * The signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature   = 'app:parse-log-file
+                           {file : Path to the log file}
+                           {--batch-size=1000 : Number of lines per row counter for batch}
+                           {--output=array : Output format (array|json)}
+                           {--pattern= : Force pattern (combined|common|custom1|custom2|pseudonymized)}
+                           {--limit= : Maximum number of lines to parse}';
 
-    protected $description = 'Parse NGINX Access Logs with improved detection';
+    /**
+     * The description of the console command.
+     *
+     * @var string
+     */
+    protected $description = 'Parse an Nginx log file and output the results in a specified format.';
 
-    public function handle(NginxLogParser $parser)
+    /**
+     * Execute the console command.
+     *
+     * @param NginxLogParser $parser
+     * @return int
+     */
+    public function handle(NginxLogParser $parser): int
     {
         $filePath     = $this->argument('file');
         $batchSize    = $this->option('batch-size');
         $output       = $this->option('output');
-        $debug        = $this->option('debug');
-        $analyzeOnly  = $this->option('analyze');
         $forcePattern = $this->option('pattern');
         $limit        = $this->option('limit') ? (int)$this->option('limit') : null;
 
         if (!file_exists($filePath)) {
-            $this->error("Datei nicht gefunden: {$filePath}");
+            $this->error("File not found: {$filePath}");
 
             return 1;
         }
 
         $this->info("Parsing {$filePath}...");
-        $this->info('Dateigröße: ' . $this->formatBytes(filesize($filePath)));
-
-        if ($debug) {
-            $parser->setDebugMode(true);
-        }
-
-        // Log-Format analysieren
-        if ($analyzeOnly) {
-            $this->analyzeLogFormat($parser, $filePath);
-
-            return 0;
-        }
+        $this->info('File size: ' . $this->formatBytes(filesize($filePath)));
 
         $totalLines  = 0;
         $progressBar = $this->output->createProgressBar();
 
         switch ($output) {
-            case 'database':
-                $this->parseToDatabase($parser, $filePath, $batchSize, $progressBar, $totalLines, $forcePattern, $limit);
-                break;
             case 'json':
                 $this->parseToJson($parser, $filePath, $batchSize, $forcePattern, $limit);
                 break;
@@ -65,106 +65,69 @@ class ParseLogFile extends Command
 
         $progressBar->finish();
         $this->newLine();
-        $this->info("Verarbeitet: {$totalLines} Zeilen");
+        $this->info("Processed: {$totalLines} lines");
+
+        return 0;
     }
 
-    private function analyzeLogFormat(NginxLogParser $parser, string $filePath): void
-    {
-        $this->info('Analysiere Log-Format...');
-
-        $analysis = $parser->detectLogFormat($filePath);
-
-        $this->info('Beispiel-Zeilen:');
-
-        foreach (array_slice($analysis['sample_lines'], 0, 3) as $i => $line) {
-            $this->line('  ' . ($i + 1) . ': ' . substr($line, 0, 120) . (strlen($line) > 120 ? '...' : ''));
-        }
-
-        $this->newLine();
-        $this->info('Pattern-Analyse:');
-
-        $table = [];
-        foreach ($analysis['pattern_results'] as $pattern => $result) {
-            $table[] = [
-                'Pattern'     => $pattern,
-                'Matches'     => $result['matches'],
-                'Percentage'  => $result['percentage'] . '%',
-                'Recommended' => $pattern === $analysis['recommended_pattern'] ? '✓' : '',
-            ];
-        }
-
-        $this->table([
-            'Pattern',
-            'Matches',
-            'Percentage',
-            'Recommended',
-        ], $table);
-
-        $this->info('Empfohlenes Pattern: ' . $analysis['recommended_pattern']);
-        $this->info('Verwenden Sie --pattern=' . $analysis['recommended_pattern'] . ' um dieses Pattern zu erzwingen.');
-    }
-
-    private function parseToArray(NginxLogParser $parser, string $filePath, int $batchSize, $progressBar, &$totalLines, ?string $forcePattern, ?int $limit): void
+    /**
+     * Parses the log file and saves the entries as an array in a PHP file.
+     *
+     * @param NginxLogParser $parser
+     * @param string         $filePath
+     * @param int            $batchSize
+     * @param mixed          $progressBar
+     * @param int            $totalLines
+     * @param string|null    $forcePattern
+     * @param int|null       $limit
+     *
+     * @return void
+     */
+    private function parseToArray(NginxLogParser $parser, string $filePath, int $batchSize, mixed $progressBar, int &$totalLines, ?string $forcePattern, ?int $limit): void
     {
         $allLogs = [];
 
         foreach ($parser->parseBatches($filePath, $batchSize, $forcePattern) as $batch) {
             $allLogs    = array_merge($allLogs, $batch);
             $totalLines += count($batch);
+
             $progressBar->advance(count($batch));
 
             if ($limit && $totalLines >= $limit) {
-                $this->warn("Limit von {$limit} Zeilen erreicht.");
-                break;
-            }
-
-            if (memory_get_usage() > 400 * 1024 * 1024) {
-                $this->warn('Memory Limit erreicht. Verwenden Sie --output=database für große Dateien.');
+                $this->warn('The limit of ' . $limit . ' lines has been reached.');
                 break;
             }
         }
 
         $outputPath = storage_path('logs/parsed_nginx_logs.php');
         file_put_contents($outputPath, '<?php return ' . var_export($allLogs, true) . ';');
-        $this->info("Array gespeichert in: {$outputPath}");
+
+        $this->info('Array saved to: ' . $outputPath);
     }
 
-    private function parseToDatabase(NginxLogParser $parser, string $filePath, int $batchSize, $progressBar, &$totalLines, ?string $forcePattern, ?int $limit): void
-    {
-        foreach ($parser->parseBatches($filePath, $batchSize, $forcePattern) as $batch) {
-            // DateTime zu String für DB
-            $batch = array_map(function ($item) {
-                if ($item['time_local']) {
-                    $item['time_local'] = $item['time_local']->toDateTimeString();
-                }
-
-                return $item;
-            }, $batch);
-
-            DB::table('nginx_logs')
-                ->insert($batch);
-            $totalLines += count($batch);
-            $progressBar->advance(count($batch));
-
-            if ($limit && $totalLines >= $limit) {
-                $this->warn("Limit von {$limit} Zeilen erreicht.");
-                break;
-            }
-        }
-    }
-
+    /**
+     * Parses the log file and saves the entries as a JSON file.
+     *
+     * @param NginxLogParser $parser
+     * @param string $filePath
+     * @param int $batchSize
+     * @param string|null $forcePattern
+     * @param int|null $limit
+     * @return void
+     */
     private function parseToJson(NginxLogParser $parser, string $filePath, int $batchSize, ?string $forcePattern, ?int $limit): void
     {
-        $outputPath = storage_path('app/private/parsed_nginx_logs_' . now()->timestamp . '.json');
+        $outputPath = storage_path('app/private/parsed_nginx_logs.json');
         $handle     = fopen($outputPath, 'w');
         fwrite($handle, "[\n");
 
         $first = true;
         $count = 0;
+
         foreach ($parser->parseStream($filePath, $forcePattern) as $logEntry) {
             if (!$first) fwrite($handle, ",\n");
 
-            // DateTime zu String für JSON
+            // DateTime to string for JSON
             if ($logEntry['time_local']) {
                 $logEntry['time_local'] = $logEntry['time_local']->toISOString();
             }
@@ -174,7 +137,7 @@ class ParseLogFile extends Command
             $count++;
 
             if ($limit && $count >= $limit) {
-                $this->info("Limit von {$limit} Zeilen erreicht.");
+                $this->info("Limit of {$limit} lines reached.");
                 break;
             }
         }
@@ -182,10 +145,16 @@ class ParseLogFile extends Command
         fwrite($handle, "\n]");
         fclose($handle);
 
-        $this->info("JSON gespeichert in: {$outputPath}");
-        $this->info("Verarbeitet: {$count} Zeilen");
+        $this->info("JSON saved to: {$outputPath}");
+        $this->info("Processed: {$count} lines");
     }
 
+    /**
+     * Formats a byte size as a readable string.
+     *
+     * @param int $size
+     * @return string
+     */
     private function formatBytes($size): string
     {
         $units = [

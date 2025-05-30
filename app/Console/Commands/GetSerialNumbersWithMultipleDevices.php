@@ -5,6 +5,9 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 
+/**
+ * Console command to find serial numbers associated with multiple devices from a JSON file.
+ */
 class GetSerialNumbersWithMultipleDevices extends Command
 {
     /**
@@ -19,12 +22,14 @@ class GetSerialNumbersWithMultipleDevices extends Command
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Get serial numbers with multiple devices from a JSON file';
 
     /**
      * Execute the console command.
+     *
+     * @return void
      */
-    public function handle()
+    public function handle(): void
     {
         // Increase memory limit to handle large JSON files
         ini_set('memory_limit', -1);
@@ -38,7 +43,7 @@ class GetSerialNumbersWithMultipleDevices extends Command
 
         // Get the content of the JSON file
         $fileContent = Storage::disk('local')
-            ->get('parsed_nginx_logs_1748421338.json');
+            ->get('parsed_nginx_logs.json');
 
         // Decode the JSON content into an object
         $entriesObject = json_decode($fileContent);
@@ -46,17 +51,15 @@ class GetSerialNumbersWithMultipleDevices extends Command
         // Set decoded object to a Laravel Collection
         $entriesObjectAsCollection = collect($entriesObject);
 
-        // Group the entries by 'serial' and 'specs.mac', count them, and filter for those with more than one device
+        // Group the entries by 'serial' and 'specs.mac'
         $grouped = $entriesObjectAsCollection->groupBy([
             'serial',
             'specs.mac',
         ], preserveKeys: true)
-            ->map(function ($group) {
-                return $group->count();
-            })
-            ->filter(function ($count) {
-                return $count > 1; // Only keep serials with more than one device
-            })
+            // Count the occurrences of each serial number
+            ->map(fn ($group) => $group->count())
+            // Filter to keep only serial numbers with more than one device
+            ->filter(fn ($count) => $count > 1)
             ->take(10)
             ->sortDesc();
 

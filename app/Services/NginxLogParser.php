@@ -2,17 +2,41 @@
 
 namespace App\Services;
 
+use Carbon\Carbon;
+use Exception;
 use Generator;
 use SplFileObject;
 
+/**
+ * Service for parsing Nginx log files with support for multiple log formats and batch/stream
+ * processing.
+ */
 class NginxLogParser
 {
-    private $patterns;
+    /**
+     * Array of supported log patterns.
+     *
+     * @var array
+     */
+    private array $patterns;
 
-    private $currentPattern;
+    /**
+     * The currently selected log pattern.
+     *
+     * @var string
+     */
+    private string $currentPattern;
 
-    private $debugMode = false;
+    /**
+     * Whether debug mode is enabled.
+     *
+     * @var bool
+     */
+    private bool $debugMode = false;
 
+    /**
+     * NginxLogParser constructor. Initializes log patterns.
+     */
     public function __construct()
     {
         $this->patterns = [
@@ -27,6 +51,13 @@ class NginxLogParser
         $this->currentPattern = 'securepoint';
     }
 
+    /**
+     * Enable or disable debug mode.
+     *
+     * @param bool $debug
+     *
+     * @return self
+     */
     public function setDebugMode(bool $debug): self
     {
         $this->debugMode = $debug;
@@ -35,7 +66,11 @@ class NginxLogParser
     }
 
     /**
-     * Analysiert die ersten Zeilen der Datei um das Format zu erkennen
+     * Analyze the first lines of the file to detect the log format.
+     *
+     * @param string $filePath
+     *
+     * @return array
      */
     public function detectLogFormat(string $filePath): array
     {
@@ -46,7 +81,9 @@ class NginxLogParser
         // Erste 10 Zeilen lesen
         foreach ($file as $line) {
             if ($lineCount >= 10) break;
+
             $trimmed = trim($line);
+
             if ($trimmed) {
                 $sampleLines[] = $trimmed;
                 $lineCount++;
@@ -54,6 +91,7 @@ class NginxLogParser
         }
 
         $results = [];
+
         foreach ($this->patterns as $name => $pattern) {
             $matches   = 0;
             $debugInfo = [];
@@ -61,6 +99,7 @@ class NginxLogParser
             foreach ($sampleLines as $lineNum => $line) {
                 if (preg_match($pattern, $line, $matches_array)) {
                     $matches++;
+
                     if ($this->debugMode && $matches <= 2) {
                         $debugInfo[] = 'Line ' . ($lineNum + 1) . ' matched with ' . count($matches_array) . ' groups';
                     }
@@ -77,6 +116,7 @@ class NginxLogParser
         // Bestes Pattern finden
         $bestPattern = 'securepoint';
         $bestScore   = 0;
+
         foreach ($results as $name => $result) {
             if ($result['matches'] > $bestScore) {
                 $bestScore   = $result['matches'];
@@ -92,7 +132,12 @@ class NginxLogParser
     }
 
     /**
-     * Stream-basiertes Parsing
+     * Stream-based parsing of the log file.
+     *
+     * @param string      $filePath
+     * @param string|null $forcePattern
+     *
+     * @return Generator
      */
     public function parseStream(string $filePath, ?string $forcePattern = null): Generator
     {
@@ -123,11 +168,13 @@ class NginxLogParser
             if (empty($line)) continue;
 
             $parsedLine = $this->parseLine($line, $lineNumber);
+
             if ($parsedLine) {
                 $parsedCount++;
                 yield $parsedLine;
             } else {
                 $errorCount++;
+
                 if ($this->debugMode && $errorCount <= 5) {
                     echo "Failed to parse line {$lineNumber}: " . substr($line, 0, 120) . "...\n";
                 }
@@ -145,7 +192,12 @@ class NginxLogParser
     }
 
     /**
-     * Einzelne Log-Zeile parsen
+     * Parse a single log line.
+     *
+     * @param string $line
+     * @param int    $lineNumber
+     *
+     * @return array|null
      */
     private function parseLine(string $line, int $lineNumber = 0): ?array
     {
@@ -154,7 +206,7 @@ class NginxLogParser
         if (preg_match($pattern, $line, $matches)) {
             try {
                 return $this->formatMatches($matches, $line);
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
                 if ($this->debugMode) {
                     echo "Error formatting line {$lineNumber}: " . $e->getMessage() . "\n";
                 }
@@ -166,6 +218,15 @@ class NginxLogParser
         return null;
     }
 
+    /**
+     * Format the matches from a parsed log line into an associative array.
+     *
+     * @param array  $matches
+     * @param string $originalLine
+     *
+     * @return array
+     * @throws Exception
+     */
     private function formatMatches(array $matches, string $originalLine): array
     {
         switch ($this->currentPattern) {
@@ -212,24 +273,26 @@ class NginxLogParser
                 ];
 
             default:
-                throw new \Exception("Unknown pattern: {$this->currentPattern}");
+                throw new Exception("Unknown pattern: {$this->currentPattern}");
         }
     }
 
     /**
-     * Custom Fields parsen (proxy=... rt=... serial=... etc.)
+     * Parse custom fields (e.g. proxy, rt, serial, etc.) from a string.
+     *
+     * @param string $customString
+     *
+     * @return array
      */
     private function parseCustomFields(string $customString): array
     {
         $fields = [];
 
-        // Pattern für key=value Paare
         if (preg_match_all('/(\w+)=([^\s]+|"[^"]*")/', $customString, $matches, PREG_SET_ORDER)) {
             foreach ($matches as $match) {
                 $key   = $match[1];
                 $value = $match[2];
 
-                // Anführungszeichen entfernen, falls vorhanden
                 if (str_starts_with($value, '"') && str_ends_with($value, '"')) {
                     $value = substr($value, 1, -1);
                 }
@@ -242,7 +305,11 @@ class NginxLogParser
     }
 
     /**
-     * Request String in Komponenten aufteilen
+     * Split a request string into its components.
+     *
+     * @param string $request
+     *
+     * @return array
      */
     private function parseRequest(string $request): array
     {
@@ -257,14 +324,18 @@ class NginxLogParser
     }
 
     /**
-     * DateTime-Parsing für ISO Format
+     * Parse a date/time string into a Carbon object.
+     *
+     * @param string $timeLocal
+     *
+     * @return Carbon|null
      */
-    private function parseDateTime(string $timeLocal): ?\Carbon\Carbon
+    private function parseDateTime(string $timeLocal): ?Carbon
     {
         try {
             // ISO Format: "2023-02-26T00:00:09+01:00"
-            return \Carbon\Carbon::parse($timeLocal);
-        } catch (\Exception $e) {
+            return Carbon::parse($timeLocal);
+        } catch (Exception $e) {
             if ($this->debugMode) {
                 echo "DateTime parse error for '{$timeLocal}': " . $e->getMessage() . "\n";
             }
@@ -273,6 +344,15 @@ class NginxLogParser
         }
     }
 
+    /**
+     * Parse the log file in batches and yield arrays of log entries.
+     *
+     * @param string      $filePath
+     * @param int         $batchSize
+     * @param string|null $forcePattern
+     *
+     * @return Generator
+     */
     public function parseBatches(string $filePath, int $batchSize = 1000, ?string $forcePattern = null): Generator
     {
         $batch = [];
